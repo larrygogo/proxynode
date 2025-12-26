@@ -1,0 +1,14 @@
+{
+  "server": {
+    "port": 3000,
+    "proxyHttpPort": 8080,
+    "proxySocks5Port": 1080
+  },
+  "nodeSelection": {
+    "strategy": "least_connections",
+    "fallback": "round_robin",
+    "region": "us-west"
+  },
+  "nodeTimeout": 30000
+}
+

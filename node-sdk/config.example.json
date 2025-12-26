@@ -1,0 +1,18 @@
+{
+  "node": {
+    "name": "node-001",
+    "region": "us-west",
+    "httpPort": 8080,
+    "socks5Port": 1080,
+    "host": "localhost"
+  },
+  "master": {
+    "url": "http://localhost:3000",
+    "wsUrl": "ws://localhost:3000/ws",
+    "apiKey": "your-api-key"
+  },
+  "monitor": {
+    "reportInterval": 30000
+  }
+}
+

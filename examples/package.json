@@ -1,0 +1,16 @@
+{
+  "name": "resiproxy-examples",
+  "version": "1.0.0",
+  "description": "Resi Proxy 使用示例",
+  "private": true,
+  "scripts": {
+    "example:node": "node use-proxy.js",
+    "example:python": "python use-proxy.py",
+    "test:socks5": "node test-socks5.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.2",
+    "socks-proxy-agent": "^8.0.2"
+  }
+}
+
