@@ -40,9 +40,10 @@ async function startMasterServer() {
   const wsServer = new MasterWebSocketServer(httpServer, nodeManager);
   console.log('[MasterServer] WebSocket 服务器已创建');
 
-  // 创建代理服务器
-  const httpProxy = new HttpProxyServer(nodeManager);
-  const socks5Proxy = new Socks5ProxyServer(nodeManager);
+  // 创建代理服务器（通过 WebSocket 隧道转发）
+  const httpProxy = new HttpProxyServer(nodeManager, wsServer);
+  const socks5Proxy = new Socks5ProxyServer(nodeManager, wsServer);
+  console.log('[MasterServer] 代理服务器已创建（WebSocket 隧道模式）');
 
   // 启动 HTTP 服务器（API + WebSocket）
   httpServer.listen(config.server.port, config.server.host, () => {

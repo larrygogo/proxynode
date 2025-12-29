@@ -1,13 +1,18 @@
 import { createServer, Server, IncomingMessage, ServerResponse } from 'http';
-import { createConnection, Socket } from 'net';
+import { Socket } from 'net';
+import { v4 as uuidv4 } from 'uuid';
 import { NodeManager } from '../manager/node-manager';
+import { MasterWebSocketServer } from '../websocket/websocket-server';
+import { ProxyRequestMessage } from '../types';
 
 export class HttpProxyServer {
   private server: Server;
   private nodeManager: NodeManager;
+  private wsServer: MasterWebSocketServer;
 
-  constructor(nodeManager: NodeManager) {
+  constructor(nodeManager: NodeManager, wsServer: MasterWebSocketServer) {
     this.nodeManager = nodeManager;
+    this.wsServer = wsServer;
     this.server = createServer(this.handleRequest.bind(this));
   }
 
@@ -16,7 +21,7 @@ export class HttpProxyServer {
     res: ServerResponse
   ): Promise<void> {
     console.log(`[HttpProxy] 收到请求: ${req.method} ${req.url}`);
-    
+
     // 处理 CONNECT 方法（用于 HTTPS 代理）
     if (req.method === 'CONNECT') {
       this.handleConnect(req, res);
@@ -47,51 +52,54 @@ export class HttpProxyServer {
     }
 
     console.log(`[HttpProxy] 选择节点: ${node.name} (${node.nodeId})`);
-    
-    // 智能选择连接地址：优先使用公网IP，如果host是0.0.0.0则使用localhost
-    const connectHost = node.publicIp || 
-                        (node.host === '0.0.0.0' ? 'localhost' : node.host) || 
-                        'localhost';
-    console.log(`[HttpProxy] 转发到节点: ${connectHost}:${node.httpPort}`);
+    console.log(`[HttpProxy] 通过 WebSocket 隧道转发 CONNECT 请求`);
 
-    // 连接到节点（作为客户端）
-    const nodeConnection = createConnection(
-      {
-        host: connectHost,
-        port: node.httpPort,
-      },
-      () => {
-        // 发送 CONNECT 请求到节点
-        nodeConnection.write(`CONNECT ${target}:${port} HTTP/1.1\r\n`);
-        nodeConnection.write(`Host: ${target}:${port}\r\n`);
-        nodeConnection.write(`\r\n`);
+    const requestId = uuidv4();
 
-        // 响应客户端
-        res.writeHead(200, 'Connection Established');
+    try {
+      // 构建代理请求
+      const proxyRequest: ProxyRequestMessage = {
+        type: 'proxy_request',
+        requestId,
+        protocol: 'https',
+        target: {
+          host: target,
+          port,
+        },
+        timestamp: Date.now(),
+      };
+
+      // 发送代理请求到节点
+      const response = await this.wsServer.sendProxyRequest(
+        node.nodeId,
+        proxyRequest
+      );
+
+      if (!response.success) {
+        console.error(
+          `[HttpProxy] 节点建立连接失败: ${response.error}`
+        );
+        res.writeHead(502, 'Proxy Error');
         res.end();
-
-        // 建立双向连接
-        req.socket.pipe(nodeConnection);
-        nodeConnection.pipe(req.socket);
-
-        // 清理连接
-        req.socket.on('close', () => {
-          nodeConnection.end();
-        });
-        nodeConnection.on('close', () => {
-          req.socket.end();
-        });
+        return;
       }
-    );
 
-    nodeConnection.on('error', (error: Error) => {
-      console.error('[HttpProxy] 节点连接错误:', error);
+      // 响应客户端：连接已建立
+      res.writeHead(200, 'Connection Established');
+      res.end();
+
+      console.log(`[HttpProxy] CONNECT 隧道已建立: ${requestId}`);
+
+      // 建立双向数据流
+      this.setupTunnel(requestId, req.socket, node.nodeId);
+    } catch (error: any) {
+      console.error(`[HttpProxy] CONNECT 失败:`, error);
       if (!res.headersSent) {
-        res.writeHead(502, 'Bad Gateway');
+        res.writeHead(502, 'Proxy Error');
         res.end();
       }
       req.socket.destroy();
-    });
+    }
   }
 
   private async handleHttp(
@@ -99,7 +107,7 @@ export class HttpProxyServer {
     res: ServerResponse
   ): Promise<void> {
     console.log(`[HttpProxy] HTTP 请求: ${req.method} ${req.url}`);
-    
+
     // 选择节点
     const node = this.nodeManager.selectNode('http');
     if (!node) {
@@ -110,12 +118,7 @@ export class HttpProxyServer {
     }
 
     console.log(`[HttpProxy] 选择节点: ${node.name} (${node.nodeId})`);
-    
-    // 智能选择连接地址：优先使用公网IP，如果host是0.0.0.0则使用localhost
-    const connectHost = node.publicIp || 
-                        (node.host === '0.0.0.0' ? 'localhost' : node.host) || 
-                        'localhost';
-    console.log(`[HttpProxy] 转发到节点: ${connectHost}:${node.httpPort}`);
+    console.log(`[HttpProxy] 通过 WebSocket 隧道转发 HTTP 请求`);
 
     if (!req.url) {
       res.writeHead(400, 'Bad Request');
@@ -123,46 +126,108 @@ export class HttpProxyServer {
       return;
     }
 
+    const requestId = uuidv4();
+
     try {
-      // HTTP 代理请求的 URL 是完整的 URL (http://host/path)
-      // 需要解析并转发到节点代理
-      const http = require('http');
-      
-      // 构建到节点的代理请求
-      const proxyReq = http.request({
-        host: connectHost,
-        port: node.httpPort,
-        method: req.method,
-        path: req.url, // 完整 URL
-        headers: req.headers,
+      // 读取请求体
+      const bodyChunks: Buffer[] = [];
+      req.on('data', (chunk: Buffer) => {
+        bodyChunks.push(chunk);
       });
 
-      // 转发请求体
-      req.pipe(proxyReq);
+      req.on('end', async () => {
+        try {
+          const body = Buffer.concat(bodyChunks);
 
-      proxyReq.on('response', (proxyRes: IncomingMessage) => {
-        console.log(`[HttpProxy] 收到节点响应: ${proxyRes.statusCode} (${req.url})`);
-        // 转发响应头
-        res.writeHead(proxyRes.statusCode || 200, proxyRes.headers);
-        // 转发响应体
-        proxyRes.pipe(res);
-      });
+          // 构建代理请求
+          const proxyRequest: ProxyRequestMessage = {
+            type: 'proxy_request',
+            requestId,
+            protocol: 'http',
+            method: req.method,
+            url: req.url,
+            headers: req.headers as Record<string, string | string[]>,
+            body: body.length > 0 ? body.toString('base64') : undefined,
+            timestamp: Date.now(),
+          };
 
-      proxyReq.on('error', (error: Error) => {
-        console.error('[HttpProxy] 节点连接错误:', error);
-        if (!res.headersSent) {
-          res.writeHead(502, 'Bad Gateway');
-          res.end('Proxy error');
+          // 发送代理请求到节点
+          const response = await this.wsServer.sendProxyRequest(
+            node.nodeId,
+            proxyRequest
+          );
+
+          if (!response.success) {
+            console.error(
+              `[HttpProxy] 节点处理请求失败: ${response.error}`
+            );
+            res.writeHead(502, 'Proxy Error');
+            res.end();
+            return;
+          }
+
+          // 写入响应头
+          res.writeHead(
+            response.statusCode || 502,
+            response.statusMessage || 'Bad Gateway',
+            response.headers || {}
+          );
+
+          console.log(
+            `[HttpProxy] 已发送响应头: ${response.statusCode} (${requestId})`
+          );
+
+          // 监听数据流
+          let dataReceived = false;
+          const dataHandler = (event: { data: Buffer; isEnd: boolean }) => {
+            dataReceived = true;
+            res.write(event.data);
+            if (event.isEnd) {
+              res.end();
+              console.log(`[HttpProxy] 请求完成: ${requestId}`);
+              this.wsServer.removeListener(`proxy_data_${requestId}`, dataHandler);
+              this.wsServer.removeListener(`proxy_close_${requestId}`, closeHandler);
+              this.wsServer.removeListener(`proxy_error_${requestId}`, errorHandler);
+            }
+          };
+
+          const closeHandler = () => {
+            if (!dataReceived) {
+              res.end();
+            }
+            console.log(`[HttpProxy] 连接关闭: ${requestId}`);
+            this.wsServer.removeListener(`proxy_data_${requestId}`, dataHandler);
+            this.wsServer.removeListener(`proxy_error_${requestId}`, errorHandler);
+          };
+
+          const errorHandler = (event: { error: string }) => {
+            console.error(`[HttpProxy] 代理错误: ${requestId} - ${event.error}`);
+            if (!res.headersSent) {
+              res.writeHead(502, 'Proxy Error');
+            }
+            res.end();
+            this.wsServer.removeListener(`proxy_data_${requestId}`, dataHandler);
+            this.wsServer.removeListener(`proxy_close_${requestId}`, closeHandler);
+          };
+
+          this.wsServer.on(`proxy_data_${requestId}`, dataHandler);
+          this.wsServer.on(`proxy_close_${requestId}`, closeHandler);
+          this.wsServer.on(`proxy_error_${requestId}`, errorHandler);
+
+          // 如果客户端断开，通知节点
+          res.on('close', () => {
+            this.wsServer.sendProxyClose(node.nodeId, requestId, 'client_closed');
+            this.wsServer.removeListener(`proxy_data_${requestId}`, dataHandler);
+            this.wsServer.removeListener(`proxy_close_${requestId}`, closeHandler);
+            this.wsServer.removeListener(`proxy_error_${requestId}`, errorHandler);
+          });
+        } catch (error: any) {
+          console.error('[HttpProxy] 处理请求体错误:', error);
+          if (!res.headersSent) {
+            res.writeHead(500, 'Internal Server Error');
+          }
+          res.end();
         }
-      });
-
-      req.on('error', (error: Error) => {
-        console.error('[HttpProxy] 请求错误:', error);
-        proxyReq.destroy();
-      });
-
-      res.on('close', () => {
-        proxyReq.destroy();
       });
     } catch (error) {
       console.error('[HttpProxy] 处理 HTTP 请求错误:', error);
@@ -171,6 +236,66 @@ export class HttpProxyServer {
         res.end();
       }
     }
+  }
+
+  /**
+   * 建立 CONNECT 隧道的双向数据流
+   */
+  private setupTunnel(
+    requestId: string,
+    clientSocket: Socket,
+    nodeId: string
+  ): void {
+    // 客户端 → Master → Node
+    clientSocket.on('data', (data: Buffer) => {
+      this.wsServer.sendProxyData(nodeId, requestId, data);
+    });
+
+    // Node → Master → 客户端
+    const dataHandler = (event: { data: Buffer; isEnd: boolean }) => {
+      clientSocket.write(event.data);
+      if (event.isEnd) {
+        clientSocket.end();
+        this.wsServer.removeListener(`proxy_data_${requestId}`, dataHandler);
+        this.wsServer.removeListener(`proxy_close_${requestId}`, closeHandler);
+        this.wsServer.removeListener(`proxy_error_${requestId}`, errorHandler);
+      }
+    };
+
+    const closeHandler = () => {
+      console.log(`[HttpProxy] 隧道关闭: ${requestId}`);
+      clientSocket.end();
+      this.wsServer.removeListener(`proxy_data_${requestId}`, dataHandler);
+      this.wsServer.removeListener(`proxy_error_${requestId}`, errorHandler);
+    };
+
+    const errorHandler = (event: { error: string }) => {
+      console.error(`[HttpProxy] 隧道错误: ${requestId} - ${event.error}`);
+      clientSocket.destroy();
+      this.wsServer.removeListener(`proxy_data_${requestId}`, dataHandler);
+      this.wsServer.removeListener(`proxy_close_${requestId}`, closeHandler);
+    };
+
+    this.wsServer.on(`proxy_data_${requestId}`, dataHandler);
+    this.wsServer.on(`proxy_close_${requestId}`, closeHandler);
+    this.wsServer.on(`proxy_error_${requestId}`, errorHandler);
+
+    // 客户端断开时通知节点
+    clientSocket.on('close', () => {
+      console.log(`[HttpProxy] 客户端断开: ${requestId}`);
+      this.wsServer.sendProxyClose(nodeId, requestId, 'client_closed');
+      this.wsServer.removeListener(`proxy_data_${requestId}`, dataHandler);
+      this.wsServer.removeListener(`proxy_close_${requestId}`, closeHandler);
+      this.wsServer.removeListener(`proxy_error_${requestId}`, errorHandler);
+    });
+
+    clientSocket.on('error', (error: Error) => {
+      console.error(`[HttpProxy] 客户端错误: ${requestId}`, error);
+      this.wsServer.sendProxyClose(nodeId, requestId, 'client_error');
+      this.wsServer.removeListener(`proxy_data_${requestId}`, dataHandler);
+      this.wsServer.removeListener(`proxy_close_${requestId}`, closeHandler);
+      this.wsServer.removeListener(`proxy_error_${requestId}`, errorHandler);
+    });
   }
 
   listen(port: number, host: string = '0.0.0.0', callback?: () => void): void {
@@ -182,4 +307,3 @@ export class HttpProxyServer {
     this.server.close(callback);
   }
 }
-

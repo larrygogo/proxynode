@@ -7,10 +7,30 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![GitHub](https://img.shields.io/badge/GitHub-larrygogo-181717?logo=github)](https://github.com/larrygogo/proxynode)
 
+## 🎉 新特性：WebSocket 隧道架构
+
+**v2.0** 引入了革命性的 **WebSocket 隧道架构**，彻底解决了 NAT 穿透问题！
+
+### 🌟 WebSocket 隧道模式
+
+- ✅ **无需公网 IP** - Node 可以部署在任何网络环境
+- ✅ **穿透多层 NAT** - 通过 WebSocket 出站连接穿透路由器
+- ✅ **支持动态 IP** - IP 变化不影响连接
+- ✅ **家庭宽带友好** - 适合家庭、公司内网部署
+- ✅ **零配置穿透** - Node 主动连接 Master，自动建立隧道
+
+**工作原理：** Node 主动连接 Master 建立 WebSocket 长连接，所有代理流量通过 WebSocket 隧道转发。类似 **frp、ngrok、CloudFlare Tunnel** 的原理。
+
+📖 **详细文档：** [WebSocket 隧道架构指南](WEBSOCKET_TUNNEL_GUIDE.md)  
+📖 **架构设计：** [反向连接架构设计](REVERSE_PROXY_ARCHITECTURE.md)
+
+---
+
 ## ✨ 功能特性
 
 ### 核心功能
 - 🌐 **双协议支持** - 同时支持 HTTP/HTTPS 和 SOCKS5 代理
+- 🚇 **WebSocket 隧道** - 穿透 NAT，无需公网 IP
 - ⚖️ **智能负载均衡** - 多种节点选择策略（轮询、最少连接、区域优先）
 - 🔄 **自动故障转移** - 节点自动健康检查和故障恢复
 - 📊 **实时监控** - 美观的 Web 监控面板，实时显示节点状态
@@ -31,28 +51,53 @@
 
 ## 🏗️ 系统架构
 
+### WebSocket 隧道模式（v2.0 新架构）
+
 ```
 ┌─────────────┐
 │   客户端     │
-│ (浏览器/App) │
+│ (手机/浏览器)│
 └──────┬──────┘
-       │ HTTP/SOCKS5
+       │ HTTP/SOCKS5 请求
        ▼
-┌──────────────────┐         WebSocket          ┌─────────────┐
-│   主服务器        │◄──────────────────────────►│  节点 1     │
-│  (负载均衡器)     │         心跳/控制           │  (代理服务)  │
-│                  │                             └──────┬──────┘
-│  - 节点管理      │◄────────────┐                     │
-│  - 请求路由      │             │                     │ 转发请求
-│  - 监控面板      │◄────────────┤              ┌─────▼──────┐
-│  - API 服务      │             │              │  互联网     │
-└──────────────────┘             │              └────────────┘
-                                 │
-                          ┌──────┴──────┐
-                          │   节点 N    │
-                          │  (代理服务)  │
-                          └─────────────┘
+┌──────────────────────────┐
+│   主服务器 (公网 IP)      │
+│   47.110.58.130          │
+│                          │
+│  ┌─────────────────────┐ │
+│  │  HTTP 代理 (8080)   │ │
+│  │  SOCKS5 代理 (1080) │ │
+│  │  API (3000)         │ │
+│  │  WebSocket (3000)   │ │
+│  └─────────────────────┘ │
+└────────┬─────────────────┘
+         │ WebSocket 隧道
+         │ (代理流量转发)
+         ▼
+    ┌────────────┐
+    │ Node 主动连接
+    │ (可穿透 NAT)
+    ▼
+┌─────────────┐  ┌─────────────┐  ┌─────────────┐
+│  节点 1     │  │  节点 2     │  │  节点 N     │
+│  (本地电脑)  │  │  (公司内网)  │  │  (任意位置)  │
+│  NAT 后面   │  │  NAT 后面   │  │  NAT 后面   │
+└──────┬──────┘  └──────┬──────┘  └──────┬──────┘
+       │                │                │
+       └────────────────┴────────────────┘
+                   实际代理请求
+                        ↓
+                  ┌───────────┐
+                  │  互联网    │
+                  │ (目标网站) │
+                  └───────────┘
 ```
+
+**关键特性：**
+- ✅ Node 无需公网 IP
+- ✅ 可穿透多层 NAT/路由器
+- ✅ 所有流量通过 WebSocket 隧道转发
+- ✅ Master 和 Node 通过 WebSocket 双向通信
 
 ## 📦 项目结构
 
@@ -63,7 +108,7 @@ proxynode/
 │   │   ├── api/           # REST API 路由
 │   │   ├── config/        # 配置管理
 │   │   ├── manager/       # 节点管理器
-│   │   ├── proxy/         # 代理服务
+│   │   ├── proxy/         # 代理服务（WebSocket 隧道模式）
 │   │   ├── websocket/     # WebSocket 服务
 │   │   └── types/         # 类型定义
 │   ├── public/            # 监控面板静态文件
@@ -74,24 +119,48 @@ proxynode/
 │   │   ├── config/        # 配置管理
 │   │   ├── monitor/       # 状态监控
 │   │   ├── proxy/         # 代理实现
-│   │   ├── server/        # 服务器通信
+│   │   ├── server/        # 服务器通信（WebSocket 客户端）
 │   │   ├── types/         # 类型定义
 │   │   └── utils/         # 工具函数
 │   └── config.json        # 配置文件
 │
+├── docs/                  # 📚 文档目录
+│   ├── README.md          # 文档索引
+│   ├── WEBSOCKET_TUNNEL_GUIDE.md        # WebSocket 隧道架构指南
+│   ├── REVERSE_PROXY_ARCHITECTURE.md    # 反向连接架构设计
+│   ├── QUICK_TEST.md                    # 快速测试指南
+│   ├── IMPLEMENTATION_SUMMARY.md        # 实施总结
+│   ├── ENV_CONFIGURATION.md             # 环境配置指南
+│   ├── TESTING.md                       # 测试指南
+│   ├── TROUBLESHOOTING.md               # 故障排除指南
+│   ├── deploy-node-on-server.md         # 部署指南
+│   ├── PACKAGE_MANAGER.md               # 包管理器指南
+│   ├── PNPM_ISSUES.md                   # pnpm 问题说明
+│   ├── AUTO_RETRY.md                    # 自动重试机制
+│   └── test-socks5.md                   # SOCKS5 测试说明
+│
+├── scripts/               # 🛠️ 脚本工具目录
+│   ├── README.md          # 脚本使用说明
+│   ├── test-proxy.ps1 / .sh              # 代理测试
+│   ├── test-proxy-env.ps1 / .sh          # 代理测试（.env）
+│   ├── test-remote-proxy.ps1             # 远程代理测试
+│   ├── test-socks5.ps1                   # SOCKS5 测试
+│   ├── check-master.ps1 / .sh            # Master 状态检查
+│   ├── check-network.ps1 / .sh           # 网络诊断
+│   └── view-nodes.ps1 / .sh              # 查看节点列表
+│
 ├── examples/              # 使用示例
-├── pnpm-workspace.yaml   # pnpm workspace 配置
-├── .npmrc                # npm/pnpm 配置
-├── env.example           # 环境变量配置示例
-├── PACKAGE_MANAGER.md    # 包管理器使用指南
-├── ENV_CONFIGURATION.md  # 环境变量配置指南
-├── TESTING.md            # 测试指南
-├── TROUBLESHOOTING.md    # 故障排除指南
-├── check-network.ps1     # Windows 网络诊断脚本
-├── check-network.sh      # Linux/Mac 网络诊断脚本
-├── test-proxy-env.ps1    # Windows 代理测试脚本（使用 .env）
-├── test-proxy-env.sh     # Linux/Mac 代理测试脚本（使用 .env）
-└── README.md             # 项目文档
+│   ├── use-proxy.js       # JavaScript 示例
+│   ├── use-proxy.py       # Python 示例
+│   └── test-socks5.js     # SOCKS5 测试示例
+│
+├── pnpm-workspace.yaml    # pnpm workspace 配置
+├── .npmrc                 # npm/pnpm 配置
+├── env.example            # 环境变量配置示例
+├── README.md              # 📖 项目主文档
+├── CHANGELOG.md           # 📝 更新日志
+├── CONTRIBUTING.md        # 🤝 贡献指南
+└── LICENSE                # 📄 开源协议
 ```
 
 ## 🚀 快速开始
@@ -530,14 +599,34 @@ CMD ["npm", "run", "start:master"]
 - 📊 启用日志审计
 - 🔄 定期更新依赖
 
-## 📚 更多文档
+## 📚 文档导航
 
-- [包管理器指南](PACKAGE_MANAGER.md) - pnpm 和 npm 使用说明
-- [pnpm 问题说明](PNPM_ISSUES.md) - pnpm 兼容性问题解决方案
-- [环境变量配置](ENV_CONFIGURATION.md) - `.env` 配置指南
-- [自动重试机制](AUTO_RETRY.md) - Node Server 自动重连说明
-- [完整测试指南](TESTING.md) - 详细的测试说明和示例
-- [故障排除指南](TROUBLESHOOTING.md) - 常见问题和解决方案
+### 🚀 快速开始
+- **[快速测试指南](docs/QUICK_TEST.md)** - 5 分钟快速测试（推荐首先阅读）
+- **[实施总结](docs/IMPLEMENTATION_SUMMARY.md)** - 部署步骤和清单
+- **[项目结构说明](docs/PROJECT_STRUCTURE.md)** - 详细的项目结构和文件组织
+
+### 🏗️ 架构文档
+- **[WebSocket 隧道架构指南](docs/WEBSOCKET_TUNNEL_GUIDE.md)** - 完整使用文档
+- **[反向连接架构设计](docs/REVERSE_PROXY_ARCHITECTURE.md)** - 架构原理和设计
+
+### 🔧 配置和部署
+- [环境配置指南](docs/ENV_CONFIGURATION.md) - `.env` 配置详解
+- [部署指南](docs/deploy-node-on-server.md) - 生产环境部署
+- [包管理器指南](docs/PACKAGE_MANAGER.md) - npm/pnpm 使用
+
+### 🧪 测试和工具
+- [测试指南](docs/TESTING.md) - 完整测试方法
+- [脚本工具](scripts/README.md) - 测试脚本使用说明
+
+### 🐛 问题排查
+- [故障排除指南](docs/TROUBLESHOOTING.md) - 常见问题解决
+- [pnpm 问题说明](docs/PNPM_ISSUES.md) - pnpm 兼容性
+
+### 📖 更多资源
+- [文档索引](docs/README.md) - 所有文档列表
+- [自动重试机制](docs/AUTO_RETRY.md) - Node 自动重连
+- [SOCKS5 测试](docs/test-socks5.md) - SOCKS5 专项测试
 - [使用示例](examples/) - 各种编程语言的使用示例
 - [API 文档](#-rest-api) - REST API 详细说明
 

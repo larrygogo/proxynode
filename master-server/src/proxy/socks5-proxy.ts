@@ -1,19 +1,21 @@
 import { createServer, Server, Socket } from 'net';
-import { SocksClient, SocksClientOptions } from 'socks';
+import { v4 as uuidv4 } from 'uuid';
 import { NodeManager } from '../manager/node-manager';
+import { MasterWebSocketServer } from '../websocket/websocket-server';
+import { ProxyRequestMessage } from '../types';
 
 export class Socks5ProxyServer {
   private server: Server;
   private nodeManager: NodeManager;
+  private wsServer: MasterWebSocketServer;
 
-  constructor(nodeManager: NodeManager) {
+  constructor(nodeManager: NodeManager, wsServer: MasterWebSocketServer) {
     this.nodeManager = nodeManager;
+    this.wsServer = wsServer;
     this.server = createServer(this.handleConnection.bind(this));
   }
 
   private async handleConnection(clientSocket: Socket): Promise<void> {
-    let nodeSocket: Socket | null = null;
-
     // 读取 SOCKS5 握手
     clientSocket.once('data', async (data: Buffer) => {
       try {
@@ -66,9 +68,12 @@ export class Socks5ProxyServer {
             // 解析端口
             targetPort = (requestData[offset] << 8) | requestData[offset + 1];
 
+            console.log(`[Socks5Proxy] SOCKS5 请求: ${targetHost}:${targetPort}`);
+
             // 选择节点
             const node = this.nodeManager.selectNode('socks5');
             if (!node) {
+              console.log(`[Socks5Proxy] 错误: 没有可用节点`);
               clientSocket.write(
                 Buffer.from([0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
               );
@@ -76,56 +81,51 @@ export class Socks5ProxyServer {
               return;
             }
 
-            // 智能选择连接地址：优先使用公网IP，如果host是0.0.0.0则使用localhost
-            const connectHost = node.publicIp || 
-                                (node.host === '0.0.0.0' ? 'localhost' : node.host) || 
-                                'localhost';
-            
-            // 连接到节点（作为 SOCKS5 客户端）
-            const socksOptions: SocksClientOptions = {
-              proxy: {
-                host: connectHost,
-                port: node.socks5Port,
-                type: 5,
-              },
-              command: 'connect',
-              destination: {
-                host: targetHost,
-                port: targetPort,
-              },
-            };
+            console.log(`[Socks5Proxy] 选择节点: ${node.name} (${node.nodeId})`);
+            console.log(`[Socks5Proxy] 通过 WebSocket 隧道转发 SOCKS5 请求`);
+
+            const requestId = uuidv4();
 
             try {
-              const info = await SocksClient.createConnection(socksOptions);
-              nodeSocket = info.socket as Socket;
+              // 构建代理请求
+              const proxyRequest: ProxyRequestMessage = {
+                type: 'proxy_request',
+                requestId,
+                protocol: 'socks5',
+                target: {
+                  host: targetHost,
+                  port: targetPort,
+                },
+                timestamp: Date.now(),
+              };
+
+              // 发送代理请求到节点
+              const response = await this.wsServer.sendProxyRequest(
+                node.nodeId,
+                proxyRequest
+              );
+
+              if (!response.success) {
+                console.error(
+                  `[Socks5Proxy] 节点建立连接失败: ${response.error}`
+                );
+                clientSocket.write(
+                  Buffer.from([0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+                );
+                clientSocket.destroy();
+                return;
+              }
 
               // 发送成功响应
               clientSocket.write(
                 Buffer.from([0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
               );
 
-              // 建立双向连接
-              clientSocket.pipe(nodeSocket);
-              nodeSocket.pipe(clientSocket);
+              console.log(`[Socks5Proxy] SOCKS5 隧道已建立: ${requestId}`);
 
-              // 清理连接
-              clientSocket.on('close', () => {
-                if (nodeSocket) {
-                  nodeSocket.destroy();
-                }
-              });
-              nodeSocket.on('close', () => {
-                clientSocket.destroy();
-              });
-              clientSocket.on('error', () => {
-                if (nodeSocket) {
-                  nodeSocket.destroy();
-                }
-              });
-              nodeSocket.on('error', () => {
-                clientSocket.destroy();
-              });
-            } catch (error) {
+              // 建立双向数据流
+              this.setupTunnel(requestId, clientSocket, node.nodeId);
+            } catch (error: any) {
               console.error('[Socks5Proxy] 连接节点失败:', error);
               clientSocket.write(
                 Buffer.from([0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
@@ -148,6 +148,66 @@ export class Socks5ProxyServer {
     });
   }
 
+  /**
+   * 建立 SOCKS5 隧道的双向数据流
+   */
+  private setupTunnel(
+    requestId: string,
+    clientSocket: Socket,
+    nodeId: string
+  ): void {
+    // 客户端 → Master → Node
+    clientSocket.on('data', (data: Buffer) => {
+      this.wsServer.sendProxyData(nodeId, requestId, data);
+    });
+
+    // Node → Master → 客户端
+    const dataHandler = (event: { data: Buffer; isEnd: boolean }) => {
+      clientSocket.write(event.data);
+      if (event.isEnd) {
+        clientSocket.end();
+        this.wsServer.removeListener(`proxy_data_${requestId}`, dataHandler);
+        this.wsServer.removeListener(`proxy_close_${requestId}`, closeHandler);
+        this.wsServer.removeListener(`proxy_error_${requestId}`, errorHandler);
+      }
+    };
+
+    const closeHandler = () => {
+      console.log(`[Socks5Proxy] 隧道关闭: ${requestId}`);
+      clientSocket.end();
+      this.wsServer.removeListener(`proxy_data_${requestId}`, dataHandler);
+      this.wsServer.removeListener(`proxy_error_${requestId}`, errorHandler);
+    };
+
+    const errorHandler = (event: { error: string }) => {
+      console.error(`[Socks5Proxy] 隧道错误: ${requestId} - ${event.error}`);
+      clientSocket.destroy();
+      this.wsServer.removeListener(`proxy_data_${requestId}`, dataHandler);
+      this.wsServer.removeListener(`proxy_close_${requestId}`, closeHandler);
+    };
+
+    this.wsServer.on(`proxy_data_${requestId}`, dataHandler);
+    this.wsServer.on(`proxy_close_${requestId}`, closeHandler);
+    this.wsServer.on(`proxy_error_${requestId}`, errorHandler);
+
+    // 客户端断开时通知节点
+    clientSocket.on('close', () => {
+      console.log(`[Socks5Proxy] 客户端断开: ${requestId}`);
+      this.wsServer.sendProxyClose(nodeId, requestId, 'client_closed');
+      this.wsServer.removeListener(`proxy_data_${requestId}`, dataHandler);
+      this.wsServer.removeListener(`proxy_close_${requestId}`, closeHandler);
+      this.wsServer.removeListener(`proxy_error_${requestId}`, errorHandler);
+    });
+
+    clientSocket.on('error', (error: Error) => {
+      console.error(`[Socks5Proxy] 客户端错误: ${requestId}`, error);
+      this.wsServer.sendProxyClose(nodeId, requestId, 'client_error');
+      this.wsServer.removeListener(`proxy_data_${requestId}`, dataHandler);
+      this.wsServer.removeListener(`proxy_close_${requestId}`, closeHandler);
+      this.wsServer.removeListener(`proxy_error_${requestId}`, errorHandler);
+    });
+  }
+
   listen(port: number, host: string = '0.0.0.0', callback?: () => void): void {
     this.server.listen(port, host, callback);
     console.log(`[Socks5Proxy] SOCKS5 代理服务器启动在 ${host}:${port}`);
@@ -157,4 +217,3 @@ export class Socks5ProxyServer {
     this.server.close(callback);
   }
 }
-

@@ -78,6 +78,81 @@ export interface NodeEvent {
 // WebSocket 消息类型
 export type WebSocketMessage = ControlCommand | NodeEvent;
 
+// ==================== WebSocket 代理消息类型 ====================
+
+// 基础代理消息
+export interface BaseProxyMessage {
+  type: string;
+  requestId: string;
+  timestamp: number;
+}
+
+// 代理请求消息（Master → Node）
+export interface ProxyRequestMessage extends BaseProxyMessage {
+  type: 'proxy_request';
+  protocol: 'http' | 'https' | 'socks5';
+  method?: string;          // HTTP 方法（仅 HTTP）
+  url?: string;             // 完整 URL（仅 HTTP）
+  target?: {                // 目标地址（HTTPS/SOCKS5）
+    host: string;
+    port: number;
+  };
+  headers?: Record<string, string | string[]>;
+  body?: string;            // Base64 编码的请求体
+}
+
+// 代理响应消息（Node → Master）
+export interface ProxyResponseMessage extends BaseProxyMessage {
+  type: 'proxy_response';
+  success: boolean;
+  statusCode?: number;
+  statusMessage?: string;
+  headers?: Record<string, string | string[]>;
+  error?: string;
+}
+
+// 代理数据消息（双向）
+export interface ProxyDataMessage extends BaseProxyMessage {
+  type: 'proxy_data';
+  data: string;             // Base64 编码的数据
+  isEnd: boolean;           // 是否是最后一块数据
+}
+
+// 代理连接关闭消息（双向）
+export interface ProxyCloseMessage extends BaseProxyMessage {
+  type: 'proxy_close';
+  reason?: string;
+}
+
+// 代理错误消息（双向）
+export interface ProxyErrorMessage extends BaseProxyMessage {
+  type: 'proxy_error';
+  error: string;
+  code?: string;
+}
+
+// 所有代理消息类型
+export type ProxyMessage = 
+  | ProxyRequestMessage 
+  | ProxyResponseMessage 
+  | ProxyDataMessage 
+  | ProxyCloseMessage 
+  | ProxyErrorMessage;
+
+// ==================== 代理请求管理 ====================
+
+// 待处理的代理请求
+export interface PendingProxyRequest {
+  requestId: string;
+  nodeId: string;
+  protocol: string;
+  resolve: (data: any) => void;
+  reject: (error: Error) => void;
+  timeout: NodeJS.Timeout;
+  dataCallback?: (data: Buffer) => void;
+  closeCallback?: () => void;
+}
+
 // 节点选择策略
 export type NodeSelectionStrategy = 
   | 'round_robin' 
