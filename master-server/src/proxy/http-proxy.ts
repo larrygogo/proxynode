@@ -266,16 +266,26 @@ export class HttpProxyServer {
             this.wsServer.removeListener(`proxy_close_${requestId}`, closeHandler);
             this.wsServer.removeListener(`proxy_error_${requestId}`, errorHandler);
           });
+
+          // 处理客户端错误
+          res.on('error', (error: any) => {
+            const commonErrors = ['ECONNRESET', 'EPIPE', 'ETIMEDOUT'];
+            if (error.code && commonErrors.includes(error.code)) {
+              console.log(`[HttpProxy] 响应流中断: ${requestId} (${error.code})`);
+            } else {
+              console.error(`[HttpProxy] 响应流错误: ${requestId}`, error.message);
+            }
+          });
         } catch (error: any) {
-          console.error('[HttpProxy] 处理请求体错误:', error);
+          console.error('[HttpProxy] 处理请求体错误:', error.message || error);
           if (!res.headersSent) {
             res.writeHead(500, 'Internal Server Error');
           }
           res.end();
         }
       });
-    } catch (error) {
-      console.error('[HttpProxy] 处理 HTTP 请求错误:', error);
+    } catch (error: any) {
+      console.error('[HttpProxy] 处理 HTTP 请求错误:', error.message || error);
       if (!res.headersSent) {
         res.writeHead(500, 'Internal Server Error');
         res.end();
@@ -334,8 +344,15 @@ export class HttpProxyServer {
       this.wsServer.removeListener(`proxy_error_${requestId}`, errorHandler);
     });
 
-    clientSocket.on('error', (error: Error) => {
-      console.error(`[HttpProxy] 客户端错误: ${requestId}`, error);
+    clientSocket.on('error', (error: any) => {
+      // 常见的网络错误不需要打印完整堆栈
+      const commonErrors = ['ECONNRESET', 'EPIPE', 'ETIMEDOUT', 'ENOTFOUND'];
+      if (error.code && commonErrors.includes(error.code)) {
+        console.log(`[HttpProxy] 客户端连接中断: ${requestId} (${error.code})`);
+      } else {
+        console.error(`[HttpProxy] 客户端错误: ${requestId}`, error);
+      }
+      
       this.wsServer.sendProxyClose(nodeId, requestId, 'client_error');
       this.wsServer.removeListener(`proxy_data_${requestId}`, dataHandler);
       this.wsServer.removeListener(`proxy_close_${requestId}`, closeHandler);

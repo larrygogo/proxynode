@@ -5,6 +5,94 @@
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)，
 并遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+---
+
+## [2.1.1] - 2025-12-29
+
+### 🐛 Bug修复
+
+**IPv6地址解析：**
+- 修复IPv6地址在HTTPS CONNECT请求中解析失败的问题
+- 修复端口号为null导致连接失败 (`options.port must be string or number`)
+- 修复日志显示`[240e:NaN`等无效地址
+
+**错误处理：**
+- 优化网络错误日志，常见错误（ECONNRESET、EPIPE等）不再显示完整堆栈
+- 改进HTTP和SOCKS5代理的错误消息格式
+
+### ✨ 改进
+
+**地址解析：**
+- 添加完整的IPv6地址解析支持（带方括号格式）
+- 添加IPv4地址和域名的正确解析
+- 添加端口号验证（1-65535范围）
+
+**日志优化：**
+- 简化常见网络错误的日志输出
+- 改进错误消息的可读性
+- 添加更详细的连接状态日志
+
+### 📝 文档
+
+- 添加 `docs/BUGFIX_SUMMARY.md` - Bug修复详细说明
+
+---
+
+## [2.1.0] - 2025-12-29
+
+### 🔒 安全功能（重大更新）
+
+**认证和授权：**
+- ✅ API Key认证 - 验证节点身份
+- ✅ 节点白名单 - 限制允许连接的节点
+- ✅ JWT Token认证 - 支持权限管理
+
+**通信安全：**
+- ✅ TLS/WSS加密 - 强制加密连接
+- ✅ 消息HMAC签名 - 防止消息篡改
+- ✅ 防重放攻击 - 时间窗口和nonce验证
+
+**访问控制：**
+- ✅ 速率限制 - 防止滥用和DDoS
+- ✅ 连接数限制 - 限制并发连接
+- ✅ 细粒度权限 - 操作权限控制
+
+**审计和监控：**
+- ✅ 安全审计日志 - 记录所有安全事件
+- ✅ 异常检测 - 识别可疑活动
+- ✅ 实时监控 - 跟踪安全指标
+
+### 📁 新增文件
+
+**安全模块：**
+- `master-server/src/security/audit-logger.ts` - 审计日志系统
+- `master-server/src/security/rate-limiter.ts` - 速率限制器
+- `master-server/src/security/message-signer.ts` - HMAC消息签名
+- `master-server/src/security/jwt-auth.ts` - JWT认证服务
+- `master-server/src/api/auth.ts` - JWT认证API
+
+**文档：**
+- `docs/SECURITY_GUIDE.md` - 安全配置指南
+- `docs/SECURITY_TESTING.md` - 安全测试指南
+- `docs/SECURITY_IMPLEMENTATION.md` - 技术实施总结
+- `docs/SECURITY_FEATURES.md` - 功能概览
+- `SECURITY.md` - 安全政策
+
+### 🔧 配置项
+
+新增环境变量：
+```bash
+MASTER_API_KEY                    # API Key认证
+MASTER_ALLOWED_NODE_IDS           # 节点白名单
+MASTER_REQUIRE_TLS                # 强制TLS
+MASTER_ENABLE_MESSAGE_SIGNING     # 消息签名
+MASTER_MAX_CONNECTIONS_PER_NODE   # 连接数限制
+MASTER_RATE_LIMIT_MESSAGES        # 消息速率限制
+MASTER_RATE_LIMIT_PROXY_REQUESTS  # 代理请求速率限制
+```
+
+---
+
 ## [2.0.0] - 2025-12-29
 
 ### 🎉 重大更新：WebSocket 隧道架构

@@ -137,14 +137,20 @@ export class Socks5ProxyServer {
             clientSocket.destroy();
           }
         });
-      } catch (error) {
-        console.error('[Socks5Proxy] 握手错误:', error);
+      } catch (error: any) {
+        console.error('[Socks5Proxy] 握手错误:', error.message || error);
         clientSocket.destroy();
       }
     });
 
-    clientSocket.on('error', (error) => {
-      console.error('[Socks5Proxy] 客户端连接错误:', error);
+    clientSocket.on('error', (error: any) => {
+      // 常见的网络错误不需要打印完整堆栈
+      const commonErrors = ['ECONNRESET', 'EPIPE', 'ETIMEDOUT', 'ENOTFOUND'];
+      if (error.code && commonErrors.includes(error.code)) {
+        console.log(`[Socks5Proxy] 客户端连接中断 (${error.code})`);
+      } else {
+        console.error('[Socks5Proxy] 客户端连接错误:', error.message || error);
+      }
     });
   }
 
@@ -199,8 +205,15 @@ export class Socks5ProxyServer {
       this.wsServer.removeListener(`proxy_error_${requestId}`, errorHandler);
     });
 
-    clientSocket.on('error', (error: Error) => {
-      console.error(`[Socks5Proxy] 客户端错误: ${requestId}`, error);
+    clientSocket.on('error', (error: any) => {
+      // 常见的网络错误不需要打印完整堆栈
+      const commonErrors = ['ECONNRESET', 'EPIPE', 'ETIMEDOUT', 'ENOTFOUND'];
+      if (error.code && commonErrors.includes(error.code)) {
+        console.log(`[Socks5Proxy] 客户端连接中断: ${requestId} (${error.code})`);
+      } else {
+        console.error(`[Socks5Proxy] 客户端错误: ${requestId}`, error.message || error);
+      }
+      
       this.wsServer.sendProxyClose(nodeId, requestId, 'client_error');
       this.wsServer.removeListener(`proxy_data_${requestId}`, dataHandler);
       this.wsServer.removeListener(`proxy_close_${requestId}`, closeHandler);
