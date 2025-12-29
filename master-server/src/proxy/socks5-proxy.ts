@@ -76,10 +76,15 @@ export class Socks5ProxyServer {
               return;
             }
 
+            // 智能选择连接地址：优先使用公网IP，如果host是0.0.0.0则使用localhost
+            const connectHost = node.publicIp || 
+                                (node.host === '0.0.0.0' ? 'localhost' : node.host) || 
+                                'localhost';
+            
             // 连接到节点（作为 SOCKS5 客户端）
             const socksOptions: SocksClientOptions = {
               proxy: {
-                host: node.host || 'localhost',
+                host: connectHost,
                 port: node.socks5Port,
                 type: 5,
               },

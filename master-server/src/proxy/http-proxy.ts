@@ -47,12 +47,17 @@ export class HttpProxyServer {
     }
 
     console.log(`[HttpProxy] 选择节点: ${node.name} (${node.nodeId})`);
-    console.log(`[HttpProxy] 转发到节点: ${node.host}:${node.httpPort}`);
+    
+    // 智能选择连接地址：优先使用公网IP，如果host是0.0.0.0则使用localhost
+    const connectHost = node.publicIp || 
+                        (node.host === '0.0.0.0' ? 'localhost' : node.host) || 
+                        'localhost';
+    console.log(`[HttpProxy] 转发到节点: ${connectHost}:${node.httpPort}`);
 
     // 连接到节点（作为客户端）
     const nodeConnection = createConnection(
       {
-        host: node.host || 'localhost',
+        host: connectHost,
         port: node.httpPort,
       },
       () => {
@@ -105,7 +110,12 @@ export class HttpProxyServer {
     }
 
     console.log(`[HttpProxy] 选择节点: ${node.name} (${node.nodeId})`);
-    console.log(`[HttpProxy] 转发到节点: ${node.host}:${node.httpPort}`);
+    
+    // 智能选择连接地址：优先使用公网IP，如果host是0.0.0.0则使用localhost
+    const connectHost = node.publicIp || 
+                        (node.host === '0.0.0.0' ? 'localhost' : node.host) || 
+                        'localhost';
+    console.log(`[HttpProxy] 转发到节点: ${connectHost}:${node.httpPort}`);
 
     if (!req.url) {
       res.writeHead(400, 'Bad Request');
@@ -120,7 +130,7 @@ export class HttpProxyServer {
       
       // 构建到节点的代理请求
       const proxyReq = http.request({
-        host: node.host || 'localhost',
+        host: connectHost,
         port: node.httpPort,
         method: req.method,
         path: req.url, // 完整 URL

@@ -60,8 +60,27 @@ export class HttpClient {
         throw new Error(response.data.message || '注册失败');
       }
     } catch (error: any) {
-      console.error('[HttpClient] 节点注册失败:', error.message);
-      throw error;
+      // 详细的错误信息
+      if (error.response) {
+        // 服务器返回了错误响应
+        console.error('[HttpClient] 节点注册失败 - 服务器响应错误:');
+        console.error(`  状态码: ${error.response.status}`);
+        console.error(`  状态文本: ${error.response.statusText}`);
+        console.error(`  响应数据:`, error.response.data);
+        throw new Error(`服务器响应错误: ${error.response.status} ${error.response.statusText}`);
+      } else if (error.request) {
+        // 请求已发送但没有收到响应
+        console.error('[HttpClient] 节点注册失败 - 无法连接到 Master Server:');
+        console.error(`  Master URL: ${this.config.master.url}`);
+        console.error(`  错误代码: ${error.code || 'UNKNOWN'}`);
+        console.error(`  错误信息: ${error.message}`);
+        throw new Error(`无法连接到 Master Server (${error.code || error.message})`);
+      } else {
+        // 其他错误
+        console.error('[HttpClient] 节点注册失败 - 请求配置错误:');
+        console.error(`  错误信息: ${error.message}`);
+        throw new Error(`请求配置错误: ${error.message}`);
+      }
     }
   }
 

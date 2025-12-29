@@ -32,7 +32,12 @@ async function registerWithRetry(
       retries++;
       const isInfinite = maxRetries === Infinity;
       
-      console.error(`[NodeServer] 节点注册失败 (尝试 ${retries}${isInfinite ? '' : `/${maxRetries}`}):`, error.message);
+      if (error.message && error.message !== 'Error') {
+        console.error(`[NodeServer] 节点注册失败 (尝试 ${retries}${isInfinite ? '' : `/${maxRetries}`}): ${error.message}`);
+      } else {
+        console.error(`[NodeServer] 节点注册失败 (尝试 ${retries}${isInfinite ? '' : `/${maxRetries}`})`);
+        console.error(`  详细错误:`, error);
+      }
       
       if (retries >= maxRetries) {
         throw new Error('达到最大重试次数，注册失败');
