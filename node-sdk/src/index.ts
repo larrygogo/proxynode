@@ -11,6 +11,7 @@ async function startNodeServer() {
   // 加载配置
   const config = getConfig();
   console.log('[NodeServer] 配置加载完成');
+  console.log(`[NodeServer] 监听地址: ${config.node.host}`);
 
   // 创建监控器
   const monitor = new NodeMonitor();
@@ -22,15 +23,15 @@ async function startNodeServer() {
   console.log('[NodeServer] 代理服务器已创建');
 
   // 启动代理服务器
-  httpProxy.listen(config.node.httpPort, () => {
+  httpProxy.listen(config.node.httpPort, config.node.host, () => {
     console.log(
-      `[NodeServer] HTTP 代理服务器启动在端口 ${config.node.httpPort}`
+      `[NodeServer] HTTP 代理服务器启动在 ${config.node.host}:${config.node.httpPort}`
     );
   });
 
-  socks5Proxy.listen(config.node.socks5Port, () => {
+  socks5Proxy.listen(config.node.socks5Port, config.node.host, () => {
     console.log(
-      `[NodeServer] SOCKS5 代理服务器启动在端口 ${config.node.socks5Port}`
+      `[NodeServer] SOCKS5 代理服务器启动在 ${config.node.host}:${config.node.socks5Port}`
     );
   });
 

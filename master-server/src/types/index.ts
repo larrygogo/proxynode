@@ -93,6 +93,7 @@ export interface Node extends NodeInfo {
 // 主服务器配置
 export interface MasterServerConfig {
   server: {
+    host: string; // 监听地址
     port: number;
     proxyHttpPort: number;
     proxySocks5Port: number;

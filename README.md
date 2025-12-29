@@ -80,7 +80,14 @@ proxynode/
 │   └── config.json        # 配置文件
 │
 ├── examples/              # 使用示例
+├── env.example           # 环境变量配置示例
+├── ENV_CONFIGURATION.md  # 环境变量配置指南
 ├── TESTING.md            # 测试指南
+├── TROUBLESHOOTING.md    # 故障排除指南
+├── check-network.ps1     # Windows 网络诊断脚本
+├── check-network.sh      # Linux/Mac 网络诊断脚本
+├── test-proxy-env.ps1    # Windows 代理测试脚本（使用 .env）
+├── test-proxy-env.sh     # Linux/Mac 代理测试脚本（使用 .env）
 └── README.md             # 项目文档
 ```
 
@@ -102,9 +109,15 @@ cd proxynode
 # 安装依赖
 npm install
 
+# 配置环境变量（推荐）
+cp env.example .env
+# 编辑 .env 文件，配置端口和 IP 地址
+
 # 构建项目
 npm run build
 ```
+
+> 💡 **提示：** 使用 `.env` 文件可以灵活配置所有端口和 IP 地址。详见 [环境变量配置指南](ENV_CONFIGURATION.md)。
 
 ### 启动主服务器
 
@@ -514,7 +527,9 @@ CMD ["npm", "run", "start:master"]
 
 ## 📚 更多文档
 
+- [环境变量配置](ENV_CONFIGURATION.md) - `.env` 配置指南
 - [完整测试指南](TESTING.md) - 详细的测试说明和示例
+- [故障排除指南](TROUBLESHOOTING.md) - 常见问题和解决方案
 - [使用示例](examples/) - 各种编程语言的使用示例
 - [API 文档](#-rest-api) - REST API 详细说明
 

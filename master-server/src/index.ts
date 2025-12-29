@@ -15,6 +15,7 @@ async function startMasterServer() {
   // 加载配置
   const config = getConfig();
   console.log('[MasterServer] 配置加载完成');
+  console.log(`[MasterServer] 监听地址: ${config.server.host}`);
 
   // 创建 Express 应用
   const app = express();
@@ -44,9 +45,9 @@ async function startMasterServer() {
   const socks5Proxy = new Socks5ProxyServer(nodeManager);
 
   // 启动 HTTP 服务器（API + WebSocket）
-  httpServer.listen(config.server.port, () => {
+  httpServer.listen(config.server.port, config.server.host, () => {
     console.log(
-      `[MasterServer] HTTP 服务器启动在端口 ${config.server.port}`
+      `[MasterServer] HTTP 服务器启动在 ${config.server.host}:${config.server.port}`
     );
     console.log(`[MasterServer] 监控面板: http://localhost:${config.server.port}/dashboard.html`);
     console.log(`[MasterServer] API 地址: http://localhost:${config.server.port}/api`);
@@ -54,16 +55,16 @@ async function startMasterServer() {
   });
 
   // 启动 HTTP 代理服务器
-  httpProxy.listen(config.server.proxyHttpPort, () => {
+  httpProxy.listen(config.server.proxyHttpPort, config.server.host, () => {
     console.log(
-      `[MasterServer] HTTP 代理服务器启动在端口 ${config.server.proxyHttpPort}`
+      `[MasterServer] HTTP 代理服务器启动在 ${config.server.host}:${config.server.proxyHttpPort}`
     );
   });
 
   // 启动 SOCKS5 代理服务器
-  socks5Proxy.listen(config.server.proxySocks5Port, () => {
+  socks5Proxy.listen(config.server.proxySocks5Port, config.server.host, () => {
     console.log(
-      `[MasterServer] SOCKS5 代理服务器启动在端口 ${config.server.proxySocks5Port}`
+      `[MasterServer] SOCKS5 代理服务器启动在 ${config.server.host}:${config.server.proxySocks5Port}`
     );
   });
 

@@ -1,15 +1,24 @@
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import { config as dotenvConfig } from 'dotenv';
 import { NodeConfig } from '../types';
 
 export type { NodeConfig };
 
+// 加载 .env 文件
+const envPath = join(__dirname, '../../.env');
+if (existsSync(envPath)) {
+  dotenvConfig({ path: envPath });
+  console.log('[Config] 已加载 .env 文件');
+}
+
 const DEFAULT_CONFIG: NodeConfig = {
   node: {
     name: 'node-001',
-    region: 'us-west',
-    httpPort: 8080,
-    socks5Port: 1080,
+    region: 'local',
+    httpPort: 8081,
+    socks5Port: 1081,
+    host: '0.0.0.0',
   },
   master: {
     url: 'http://localhost:3000',
@@ -53,9 +62,10 @@ export function loadConfig(): NodeConfig {
 }
 
 export function getConfig(): NodeConfig {
-  // 也支持从环境变量读取
+  // 优先从环境变量读取，其次从配置文件，最后使用默认值
   const config = loadConfig();
 
+  // Node 基本配置
   if (process.env.NODE_NAME) {
     config.node.name = process.env.NODE_NAME;
   }
@@ -68,6 +78,11 @@ export function getConfig(): NodeConfig {
   if (process.env.NODE_SOCKS5_PORT) {
     config.node.socks5Port = parseInt(process.env.NODE_SOCKS5_PORT, 10);
   }
+  if (process.env.NODE_HOST) {
+    config.node.host = process.env.NODE_HOST;
+  }
+  
+  // Master Server 连接配置
   if (process.env.MASTER_URL) {
     config.master.url = process.env.MASTER_URL;
   }
@@ -77,10 +92,11 @@ export function getConfig(): NodeConfig {
   if (process.env.MASTER_API_KEY) {
     config.master.apiKey = process.env.MASTER_API_KEY;
   }
-  if (process.env.REPORT_INTERVAL) {
-    config.monitor.reportInterval = parseInt(process.env.REPORT_INTERVAL, 10);
+  
+  // 监控配置
+  if (process.env.MONITOR_REPORT_INTERVAL) {
+    config.monitor.reportInterval = parseInt(process.env.MONITOR_REPORT_INTERVAL, 10);
   }
 
   return config;
 }
-

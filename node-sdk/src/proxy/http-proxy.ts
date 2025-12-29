@@ -252,9 +252,9 @@ export class HttpProxyServer {
   /**
    * 启动服务器
    */
-  listen(port: number, callback?: () => void): void {
-    this.server.listen(port, callback);
-    console.log(`[HttpProxy] HTTP 代理服务器启动在端口 ${port}`);
+  listen(port: number, host: string = '0.0.0.0', callback?: () => void): void {
+    this.server.listen(port, host, callback);
+    console.log(`[HttpProxy] HTTP 代理服务器启动在 ${host}:${port}`);
   }
 
   /**

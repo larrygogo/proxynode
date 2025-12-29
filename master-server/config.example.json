@@ -6,9 +6,7 @@
   },
   "nodeSelection": {
     "strategy": "least_connections",
-    "fallback": "round_robin",
-    "region": "us-west"
+    "fallback": "round_robin"
   },
   "nodeTimeout": 30000
 }
-
