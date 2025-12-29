@@ -80,15 +80,17 @@ MASTER_WS_URL=wss://your-server.com:3000/ws
 防止DDoS攻击和资源滥用。
 
 **优势：**
-- 防止滥用
-- 保护资源
-- 公平使用
+- 防止控制消息滥用
+- 保护管理接口
+- 不影响代理数据流量
 
 **配置：**
 ```bash
-MASTER_RATE_LIMIT_MESSAGES=1000
-MASTER_RATE_LIMIT_PROXY_REQUESTS=500
+MASTER_RATE_LIMIT_MESSAGES=1000          # 只限制控制消息
+MASTER_RATE_LIMIT_PROXY_REQUESTS=500     # 限制新连接建立速率
 ```
+
+**重要：** 代理数据传输（proxy_data、proxy_response等）**不受速率限制**，确保正常代理流量不受影响。
 
 ### ✅ 5. 审计日志
 记录所有安全事件，便于追踪和分析。

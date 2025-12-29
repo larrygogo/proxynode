@@ -147,9 +147,12 @@ export class MasterWebSocketServer extends EventEmitter {
             return;
           }
           
-          // 速率限制检查（只对已注册的节点检查）
+          // 速率限制检查（只对已注册的节点和控制消息检查）
+          // 代理数据消息（proxy_data、proxy_response、proxy_close）不应被限制
           if (ws.nodeId) {
-            if (!this.rateLimiter.checkMessageRate(ws.nodeId)) {
+            const isProxyDataMessage = ['proxy_data', 'proxy_response', 'proxy_close', 'proxy_error'].includes(message.type);
+            
+            if (!isProxyDataMessage && !this.rateLimiter.checkMessageRate(ws.nodeId)) {
               this.auditLogger.logRateLimitExceeded(ws.nodeId, '消息速率');
               ws.send(
                 JSON.stringify({

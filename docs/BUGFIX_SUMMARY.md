@@ -41,7 +41,51 @@ curl -x http://localhost:8080 https://[2001:db8::1]:443
 
 ---
 
-### 🔧 优化 1: 网络错误日志改进
+### 🔧 优化 1: 速率限制范围修正
+
+**问题描述：**
+- 速率限制对所有WebSocket消息生效，包括代理数据消息
+- 单个设备访问网页时，大量proxy_data消息导致频繁触发速率限制
+- 即使设置为5000条/分钟仍然不够用
+
+**根本原因：**
+```typescript
+// 旧逻辑：对所有消息检查速率限制
+if (!this.rateLimiter.checkMessageRate(ws.nodeId)) {
+  // 拒绝消息
+}
+```
+
+这会限制所有消息，包括：
+- `proxy_request` - 代理请求
+- `proxy_response` - 代理响应
+- `proxy_data` - 代理数据（数量最多！）
+- `proxy_close` - 连接关闭
+- 控制消息（event、command等）
+
+一个网页可能有几百个资源，每个资源产生多条proxy_data消息，很容易超限。
+
+**修复方案：**
+- ✅ 只对控制消息进行速率限制
+- ✅ 代理数据消息（proxy_data、proxy_response、proxy_close、proxy_error）不受限制
+- ✅ 保持对控制消息的保护，防止滥用
+
+**修复后逻辑：**
+```typescript
+// 新逻辑：排除代理数据消息
+const isProxyDataMessage = ['proxy_data', 'proxy_response', 'proxy_close', 'proxy_error'].includes(message.type);
+
+if (!isProxyDataMessage && !this.rateLimiter.checkMessageRate(ws.nodeId)) {
+  // 只对控制消息限制
+}
+```
+
+**影响文件：**
+- `master-server/src/websocket/websocket-server.ts`
+
+---
+
+### 🔧 优化 2: 网络错误日志改进
 
 **问题描述：**
 - 常见的网络错误（如ECONNRESET）会输出完整的堆栈跟踪
@@ -157,8 +201,10 @@ curl -v -x http://localhost:8080 https://8.8.8.8:443
 **Bug修复：**
 - 修复IPv6地址在HTTPS CONNECT请求中解析失败的问题
 - 修复端口号为null导致连接失败的问题
+- 修复速率限制误限制代理数据消息导致正常流量被拒绝的问题
 
 **改进：**
+- 优化速率限制逻辑，只限制控制消息，不限制代理数据流
 - 优化网络错误日志输出，减少不必要的堆栈跟踪
 - 改进错误消息的可读性
 - 添加更详细的连接状态日志
@@ -167,3 +213,4 @@ curl -v -x http://localhost:8080 https://8.8.8.8:443
 - 验证IPv6代理连接
 - 验证IPv4和域名连接
 - 验证错误日志格式
+- 验证高流量场景不触发速率限制
