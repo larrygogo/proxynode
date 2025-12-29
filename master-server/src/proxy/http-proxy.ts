@@ -14,6 +14,9 @@ export class HttpProxyServer {
     this.nodeManager = nodeManager;
     this.wsServer = wsServer;
     this.server = createServer(this.handleRequest.bind(this));
+    
+    // 注册 CONNECT 事件处理器（用于 HTTPS 代理）
+    this.server.on('connect', this.handleConnect.bind(this));
   }
 
   private async handleRequest(
@@ -22,23 +25,18 @@ export class HttpProxyServer {
   ): Promise<void> {
     console.log(`[HttpProxy] 收到请求: ${req.method} ${req.url}`);
 
-    // 处理 CONNECT 方法（用于 HTTPS 代理）
-    if (req.method === 'CONNECT') {
-      this.handleConnect(req, res);
-      return;
-    }
-
     // 处理普通 HTTP 请求
     this.handleHttp(req, res);
   }
 
   private async handleConnect(
     req: IncomingMessage,
-    res: ServerResponse
+    clientSocket: Socket,
+    head: Buffer
   ): Promise<void> {
-    const url = new URL(`https://${req.url}`);
-    const target = url.hostname;
-    const port = parseInt(url.port || '443', 10);
+    // 解析目标地址
+    const [target, portStr] = (req.url || '').split(':');
+    const port = parseInt(portStr || '443', 10);
 
     console.log(`[HttpProxy] CONNECT 请求: ${target}:${port}`);
 
@@ -46,8 +44,8 @@ export class HttpProxyServer {
     const node = this.nodeManager.selectNode('http');
     if (!node) {
       console.log(`[HttpProxy] 错误: 没有可用节点`);
-      res.writeHead(502, 'No available nodes');
-      res.end();
+      clientSocket.write('HTTP/1.1 502 No available nodes\r\n\r\n');
+      clientSocket.destroy();
       return;
     }
 
@@ -79,26 +77,27 @@ export class HttpProxyServer {
         console.error(
           `[HttpProxy] 节点建立连接失败: ${response.error}`
         );
-        res.writeHead(502, 'Proxy Error');
-        res.end();
+        clientSocket.write('HTTP/1.1 502 Proxy Error\r\n\r\n');
+        clientSocket.destroy();
         return;
       }
 
       // 响应客户端：连接已建立
-      res.writeHead(200, 'Connection Established');
-      res.end();
+      clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
 
       console.log(`[HttpProxy] CONNECT 隧道已建立: ${requestId}`);
 
+      // 如果有初始数据（head），立即发送
+      if (head && head.length > 0) {
+        this.wsServer.sendProxyData(node.nodeId, requestId, head);
+      }
+
       // 建立双向数据流
-      this.setupTunnel(requestId, req.socket, node.nodeId);
+      this.setupTunnel(requestId, clientSocket, node.nodeId);
     } catch (error: any) {
       console.error(`[HttpProxy] CONNECT 失败:`, error);
-      if (!res.headersSent) {
-        res.writeHead(502, 'Proxy Error');
-        res.end();
-      }
-      req.socket.destroy();
+      clientSocket.write('HTTP/1.1 502 Proxy Error\r\n\r\n');
+      clientSocket.destroy();
     }
   }
 
