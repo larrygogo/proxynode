@@ -80,7 +80,10 @@ proxynode/
 │   └── config.json        # 配置文件
 │
 ├── examples/              # 使用示例
+├── pnpm-workspace.yaml   # pnpm workspace 配置
+├── .npmrc                # npm/pnpm 配置
 ├── env.example           # 环境变量配置示例
+├── PACKAGE_MANAGER.md    # 包管理器使用指南
 ├── ENV_CONFIGURATION.md  # 环境变量配置指南
 ├── TESTING.md            # 测试指南
 ├── TROUBLESHOOTING.md    # 故障排除指南
@@ -96,7 +99,7 @@ proxynode/
 ### 环境要求
 
 - Node.js >= 20.0.0
-- npm >= 9.0.0
+- npm >= 9.0.0（推荐）或 pnpm >= 8.0.0
 - TypeScript >= 5.3.0
 
 ### 安装
@@ -117,7 +120,9 @@ cp env.example .env
 npm run build
 ```
 
-> 💡 **提示：** 使用 `.env` 文件可以灵活配置所有端口和 IP 地址。详见 [环境变量配置指南](ENV_CONFIGURATION.md)。
+> 💡 **提示：** 
+> - 使用 `.env` 文件可以灵活配置所有端口和 IP 地址。详见 [环境变量配置指南](ENV_CONFIGURATION.md)。
+> - 项目支持 npm 和 pnpm，推荐使用 npm。详见 [包管理器指南](PACKAGE_MANAGER.md)。
 
 ### 启动主服务器
 
@@ -527,7 +532,10 @@ CMD ["npm", "run", "start:master"]
 
 ## 📚 更多文档
 
+- [包管理器指南](PACKAGE_MANAGER.md) - pnpm 和 npm 使用说明
+- [pnpm 问题说明](PNPM_ISSUES.md) - pnpm 兼容性问题解决方案
 - [环境变量配置](ENV_CONFIGURATION.md) - `.env` 配置指南
+- [自动重试机制](AUTO_RETRY.md) - Node Server 自动重连说明
 - [完整测试指南](TESTING.md) - 详细的测试说明和示例
 - [故障排除指南](TROUBLESHOOTING.md) - 常见问题和解决方案
 - [使用示例](examples/) - 各种编程语言的使用示例

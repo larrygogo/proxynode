@@ -5,6 +5,51 @@ import { Socks5ProxyServer } from './proxy/socks5-proxy';
 import { HttpClient } from './server/http-client';
 import { WebSocketClient } from './server/websocket-client';
 
+/**
+ * 延迟函数
+ */
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * 注册节点到主服务器（带重试）
+ */
+async function registerWithRetry(
+  httpClient: HttpClient,
+  maxRetries: number = Infinity,
+  initialDelay: number = 5000
+): Promise<string> {
+  let retries = 0;
+  let currentDelay = initialDelay;
+
+  while (retries < maxRetries) {
+    try {
+      const nodeId = await httpClient.register();
+      console.log(`[NodeServer] 节点已注册: ${nodeId}`);
+      return nodeId;
+    } catch (error: any) {
+      retries++;
+      const isInfinite = maxRetries === Infinity;
+      
+      console.error(`[NodeServer] 节点注册失败 (尝试 ${retries}${isInfinite ? '' : `/${maxRetries}`}):`, error.message);
+      
+      if (retries >= maxRetries) {
+        throw new Error('达到最大重试次数，注册失败');
+      }
+
+      // 计算下次重试的延迟时间（指数退避，最大60秒）
+      const nextDelay = Math.min(currentDelay * 1.5, 60000);
+      console.log(`[NodeServer] ${Math.floor(currentDelay / 1000)} 秒后重试连接 Master Server...`);
+      
+      await delay(currentDelay);
+      currentDelay = nextDelay;
+    }
+  }
+
+  throw new Error('注册失败');
+}
+
 async function startNodeServer() {
   console.log('[NodeServer] 正在启动节点服务器...');
 
@@ -12,6 +57,7 @@ async function startNodeServer() {
   const config = getConfig();
   console.log('[NodeServer] 配置加载完成');
   console.log(`[NodeServer] 监听地址: ${config.node.host}`);
+  console.log(`[NodeServer] Master Server: ${config.master.url}`);
 
   // 创建监控器
   const monitor = new NodeMonitor();
@@ -35,16 +81,19 @@ async function startNodeServer() {
     );
   });
 
+  console.log('[NodeServer] 代理服务器已启动，等待连接到 Master Server...');
+
   // 创建 HTTP 客户端
   const httpClient = new HttpClient(config, monitor);
 
-  // 注册节点到主服务器
+  // 注册节点到主服务器（带重试）
   let nodeId: string;
   try {
-    nodeId = await httpClient.register();
-    console.log(`[NodeServer] 节点已注册: ${nodeId}`);
+    nodeId = await registerWithRetry(httpClient);
   } catch (error: any) {
-    console.error('[NodeServer] 节点注册失败:', error.message);
+    console.error('[NodeServer] 无法连接到 Master Server:', error.message);
+    console.error('[NodeServer] 节点将继续运行，但无法与 Master Server 通信');
+    console.error('[NodeServer] 请检查 Master Server 是否正常运行，以及配置是否正确');
     process.exit(1);
   }
 

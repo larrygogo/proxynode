@@ -12,7 +12,12 @@
     "build:master": "npm run build --workspace=master-server",
     "build:node": "npm run build --workspace=node-sdk",
     "start:master": "npm run start --workspace=master-server",
-    "start:node": "npm run start --workspace=node-sdk"
+    "start:node": "npm run start --workspace=node-sdk",
+    "dev:master": "npm run dev --workspace=master-server",
+    "dev:node": "npm run dev --workspace=node-sdk",
+    "build:pnpm": "pnpm -r build",
+    "start:master:pnpm": "pnpm --filter master-server start",
+    "start:node:pnpm": "pnpm --filter node-sdk start"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
