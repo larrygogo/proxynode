@@ -23,11 +23,28 @@ const DEFAULT_CONFIG: NodeConfig = {
   master: {
     url: 'http://localhost:3000',
     wsUrl: 'ws://localhost:3000/ws',
+    // 默认不使用WSS（向后兼容），但生产环境应使用wss://
   },
   monitor: {
     reportInterval: 30000, // 30秒
   },
 };
+
+/**
+ * 验证WebSocket URL是否安全
+ */
+function validateWebSocketUrl(wsUrl: string, requireTLS: boolean = false): void {
+  if (requireTLS && wsUrl.startsWith('ws://')) {
+    console.error('[Config] 安全警告: 检测到不安全的WebSocket连接(ws://)');
+    console.error('[Config] 生产环境必须使用加密连接(wss://)');
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error('生产环境禁止使用不安全的WebSocket连接(ws://)，请使用wss://');
+    }
+  } else if (wsUrl.startsWith('ws://') && !wsUrl.includes('localhost') && !wsUrl.includes('127.0.0.1')) {
+    console.warn('[Config] 安全警告: 使用不安全的WebSocket连接(ws://)连接到远程服务器');
+    console.warn('[Config] 建议使用加密连接(wss://)以保护数据传输安全');
+  }
+}
 
 export function loadConfig(): NodeConfig {
   const configPath = join(__dirname, '../../config.json');
@@ -96,6 +113,15 @@ export function getConfig(): NodeConfig {
   // 监控配置
   if (process.env.MONITOR_REPORT_INTERVAL) {
     config.monitor.reportInterval = parseInt(process.env.MONITOR_REPORT_INTERVAL, 10);
+  }
+
+  // 验证WebSocket URL安全性
+  const requireTLS = process.env.NODE_REQUIRE_TLS === 'true';
+  validateWebSocketUrl(config.master.wsUrl, requireTLS);
+
+  // 安全建议
+  if (!config.master.apiKey) {
+    console.warn('[Config] 安全警告: 未设置MASTER_API_KEY，节点认证可能失败');
   }
 
   return config;

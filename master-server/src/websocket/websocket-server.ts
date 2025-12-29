@@ -1,7 +1,12 @@
 import { WebSocketServer, WebSocket } from 'ws';
 import { Server as HttpServer } from 'http';
 import { EventEmitter } from 'events';
+import { IncomingMessage } from 'http';
 import { NodeManager } from '../manager/node-manager';
+import { AuditLogger } from '../security/audit-logger';
+import { RateLimiter } from '../security/rate-limiter';
+import { MessageSigner } from '../security/message-signer';
+import { MasterServerConfig } from '../types';
 import {
   ControlCommand,
   NodeEvent,
@@ -17,27 +22,90 @@ import {
 interface NodeWebSocket extends WebSocket {
   nodeId?: string;
   isAlive?: boolean;
+  ip?: string;
+  connectionCount?: number;
 }
 
 export class MasterWebSocketServer extends EventEmitter {
   private wss: WebSocketServer;
   private nodeManager: NodeManager;
+  private config: MasterServerConfig;
+  private auditLogger: AuditLogger;
+  private rateLimiter: RateLimiter;
+  private messageSigner: MessageSigner | null = null;
   private nodeConnections: Map<string, NodeWebSocket> = new Map();
+  private nodeConnectionCounts: Map<string, number> = new Map();
   private pendingProxyRequests: Map<string, PendingProxyRequest> = new Map();
   private readonly PROXY_TIMEOUT = 60000; // 代理请求超时时间：60秒
 
-  constructor(server: HttpServer, nodeManager: NodeManager) {
+  constructor(server: HttpServer, nodeManager: NodeManager, config: MasterServerConfig) {
     super();
     this.nodeManager = nodeManager;
-    this.wss = new WebSocketServer({ server, path: '/ws' });
+    this.config = config;
+    this.auditLogger = new AuditLogger();
+    this.rateLimiter = new RateLimiter(
+      config.security.rateLimit!.maxMessagesPerMinute,
+      config.security.rateLimit!.maxProxyRequestsPerMinute
+    );
+    
+    // 如果启用消息签名且有API Key，创建MessageSigner
+    if (config.security.enableMessageSigning && config.security.apiKey) {
+      this.messageSigner = new MessageSigner(config.security.apiKey);
+    }
+    
+    this.wss = new WebSocketServer({ 
+      server, 
+      path: '/ws',
+      verifyClient: this.verifyClient.bind(this),
+    });
 
     this.setupWebSocketServer();
     this.startHeartbeat();
+    
+    console.log('[WebSocket] 安全功能已启用:');
+    console.log(`  - API Key认证: ${config.security.apiKey ? '✓' : '✗'}`);
+    console.log(`  - 节点白名单: ${config.security.allowedNodeIds ? '✓' : '✗'}`);
+    console.log(`  - TLS强制: ${config.security.requireTLS ? '✓' : '✗'}`);
+    console.log(`  - 消息签名: ${this.messageSigner ? '✓' : '✗'}`);
+    console.log(`  - 速率限制: ✓`);
+  }
+
+  /**
+   * 验证客户端连接
+   */
+  private verifyClient(
+    info: { origin: string; secure: boolean; req: IncomingMessage },
+    callback: (result: boolean, code?: number, message?: string) => void
+  ): void {
+    const req = info.req;
+    const ip = req.socket.remoteAddress || 'unknown';
+
+    // 1. 检查TLS要求
+    if (this.config.security.requireTLS && !info.secure) {
+      this.auditLogger.logTLSViolation(ip, '尝试使用非加密连接(ws://)');
+      callback(false, 403, '必须使用加密连接(wss://)');
+      return;
+    }
+
+    // 2. 验证API Key
+    if (this.config.security.apiKey) {
+      const clientApiKey = req.headers['x-api-key'] as string;
+      if (!clientApiKey || clientApiKey !== this.config.security.apiKey) {
+        this.auditLogger.logAuthFailure(ip, 'API Key无效或缺失');
+        callback(false, 401, 'API Key验证失败');
+        return;
+      }
+    }
+
+    // 验证通过
+    callback(true);
   }
 
   private setupWebSocketServer(): void {
-    this.wss.on('connection', (ws: NodeWebSocket) => {
-      console.log('[WebSocket] 新连接建立');
+    this.wss.on('connection', (ws: NodeWebSocket, req: IncomingMessage) => {
+      const ip = req.socket.remoteAddress || 'unknown';
+      ws.ip = ip;
+      console.log(`[WebSocket] 新连接建立 IP: ${ip}`);
 
       ws.isAlive = true;
 
@@ -49,12 +117,48 @@ export class MasterWebSocketServer extends EventEmitter {
       // 处理消息
       ws.on('message', (data: Buffer) => {
         try {
-          const message: any = JSON.parse(data.toString());
+          let message: any = JSON.parse(data.toString());
+          
+          // 验证消息签名（如果启用）
+          if (this.messageSigner && ws.nodeId) {
+            const verification = this.messageSigner.verifyMessage(message);
+            if (!verification.valid) {
+              console.error(`[WebSocket] 消息签名验证失败: ${verification.error}`);
+              this.auditLogger.logSuspiciousActivity(
+                ws.nodeId,
+                ws.ip || 'unknown',
+                `消息签名验证失败: ${verification.error}`
+              );
+              ws.send(
+                JSON.stringify({
+                  type: 'error',
+                  message: '消息签名验证失败',
+                })
+              );
+              return;
+            }
+            // 移除签名元数据
+            message = this.messageSigner.stripSignature(message);
+          }
           
           // 处理节点 ID 注册消息
           if (message.type === 'node_id' && message.nodeId) {
             this.registerNodeConnection(message.nodeId, ws);
             return;
+          }
+          
+          // 速率限制检查（只对已注册的节点检查）
+          if (ws.nodeId) {
+            if (!this.rateLimiter.checkMessageRate(ws.nodeId)) {
+              this.auditLogger.logRateLimitExceeded(ws.nodeId, '消息速率');
+              ws.send(
+                JSON.stringify({
+                  type: 'error',
+                  message: '消息速率超限，请稍后重试',
+                })
+              );
+              return;
+            }
           }
           
           // 处理其他消息
@@ -75,7 +179,17 @@ export class MasterWebSocketServer extends EventEmitter {
       ws.on('close', () => {
         if (ws.nodeId) {
           console.log(`[WebSocket] 节点断开连接: ${ws.nodeId}`);
+          this.auditLogger.logNodeDisconnected(ws.nodeId);
           this.nodeConnections.delete(ws.nodeId);
+          
+          // 减少连接计数
+          const count = this.nodeConnectionCounts.get(ws.nodeId) || 1;
+          if (count <= 1) {
+            this.nodeConnectionCounts.delete(ws.nodeId);
+            this.rateLimiter.reset(ws.nodeId);
+          } else {
+            this.nodeConnectionCounts.set(ws.nodeId, count - 1);
+          }
         }
       });
 
@@ -83,7 +197,17 @@ export class MasterWebSocketServer extends EventEmitter {
       ws.on('error', (error) => {
         console.error('[WebSocket] 连接错误:', error);
         if (ws.nodeId) {
+          this.auditLogger.logNodeDisconnected(ws.nodeId, `连接错误: ${error.message}`);
           this.nodeConnections.delete(ws.nodeId);
+          
+          // 减少连接计数
+          const count = this.nodeConnectionCounts.get(ws.nodeId) || 1;
+          if (count <= 1) {
+            this.nodeConnectionCounts.delete(ws.nodeId);
+            this.rateLimiter.reset(ws.nodeId);
+          } else {
+            this.nodeConnectionCounts.set(ws.nodeId, count - 1);
+          }
         }
       });
     });
@@ -128,9 +252,69 @@ export class MasterWebSocketServer extends EventEmitter {
    * 注册节点连接
    */
   registerNodeConnection(nodeId: string, ws: NodeWebSocket): void {
+    const ip = ws.ip || 'unknown';
+
+    // 1. 验证节点白名单
+    if (this.config.security.allowedNodeIds && 
+        this.config.security.allowedNodeIds.length > 0) {
+      if (!this.config.security.allowedNodeIds.includes(nodeId)) {
+        this.auditLogger.logNodeRejected(nodeId, ip, '不在白名单中');
+        ws.send(
+          JSON.stringify({
+            type: 'error',
+            message: '节点ID未授权',
+          })
+        );
+        ws.close(1008, '节点ID未授权');
+        return;
+      }
+    }
+
+    // 2. 检查该节点的连接数限制
+    const currentConnections = this.nodeConnectionCounts.get(nodeId) || 0;
+    const maxConnections = this.config.security.maxConnectionsPerNode || 1;
+    
+    if (currentConnections >= maxConnections) {
+      this.auditLogger.logNodeRejected(nodeId, ip, `超过最大连接数限制(${maxConnections})`);
+      ws.send(
+        JSON.stringify({
+          type: 'error',
+          message: `节点连接数超限，最多允许${maxConnections}个连接`,
+        })
+      );
+      ws.close(1008, '连接数超限');
+      return;
+    }
+
+    // 3. 检查是否已有同nodeId的连接（如果限制为1，则关闭旧连接）
+    if (maxConnections === 1 && this.nodeConnections.has(nodeId)) {
+      const oldWs = this.nodeConnections.get(nodeId);
+      if (oldWs && oldWs !== ws) {
+        console.log(`[WebSocket] 关闭旧连接，nodeId: ${nodeId}`);
+        oldWs.close(1000, '新连接已建立');
+        this.nodeConnections.delete(nodeId);
+      }
+    }
+
+    // 4. 注册连接
     ws.nodeId = nodeId;
     this.nodeConnections.set(nodeId, ws);
-    console.log(`[WebSocket] 节点连接已注册: ${nodeId}`);
+    this.nodeConnectionCounts.set(nodeId, currentConnections + 1);
+    
+    // 5. 记录审计日志
+    this.auditLogger.logAuthSuccess(nodeId, ip);
+    this.auditLogger.logNodeRegistered(nodeId, ip);
+    
+    console.log(`[WebSocket] 节点连接已注册: ${nodeId} (IP: ${ip})`);
+    
+    // 6. 发送确认消息
+    ws.send(
+      JSON.stringify({
+        type: 'registered',
+        nodeId: nodeId,
+        message: '节点注册成功',
+      })
+    );
   }
 
   /**
@@ -144,7 +328,13 @@ export class MasterWebSocketServer extends EventEmitter {
     }
 
     try {
-      ws.send(JSON.stringify(command));
+      // 如果启用了消息签名，对消息进行签名
+      const messageToSend = this.messageSigner 
+        ? this.messageSigner.signMessage(command)
+        : command;
+      
+      ws.send(JSON.stringify(messageToSend));
+      this.auditLogger.logCommandExecuted(nodeId, command.command);
       console.log(`[WebSocket] 已发送指令到节点 ${nodeId}: ${command.command}`);
       return true;
     } catch (error) {
@@ -219,6 +409,12 @@ export class MasterWebSocketServer extends EventEmitter {
     nodeId: string,
     request: ProxyRequestMessage
   ): Promise<ProxyResponseMessage> {
+    // 1. 检查代理请求速率限制
+    if (!this.rateLimiter.checkProxyRequestRate(nodeId)) {
+      this.auditLogger.logRateLimitExceeded(nodeId, '代理请求速率');
+      throw new Error(`节点 ${nodeId} 代理请求速率超限`);
+    }
+
     const ws = this.nodeConnections.get(nodeId);
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       throw new Error(`节点 ${nodeId} 未连接或连接不可用`);
@@ -240,7 +436,12 @@ export class MasterWebSocketServer extends EventEmitter {
       });
 
       try {
-        ws.send(JSON.stringify(request));
+        // 如果启用了消息签名，对消息进行签名
+        const messageToSend = this.messageSigner 
+          ? this.messageSigner.signMessage(request)
+          : request;
+        
+        ws.send(JSON.stringify(messageToSend));
         console.log(
           `[WebSocket] 发送代理请求: ${request.requestId} → ${nodeId} (${request.protocol})`
         );

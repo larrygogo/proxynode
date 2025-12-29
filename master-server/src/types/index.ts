@@ -179,6 +179,17 @@ export interface MasterServerConfig {
     region?: string; // 用于 region_priority 策略
   };
   nodeTimeout: number; // 节点超时时间（毫秒）
+  security: {
+    apiKey?: string; // API Key用于节点认证
+    allowedNodeIds?: string[]; // 白名单节点ID列表
+    requireTLS?: boolean; // 是否强制使用TLS/WSS
+    enableMessageSigning?: boolean; // 是否启用消息HMAC签名（需要apiKey）
+    maxConnectionsPerNode?: number; // 每个节点的最大连接数
+    rateLimit?: {
+      maxMessagesPerMinute: number; // 每分钟最大消息数
+      maxProxyRequestsPerMinute: number; // 每分钟最大代理请求数
+    };
+  };
 }
 
 // 代理请求信息

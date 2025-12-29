@@ -34,9 +34,55 @@ export class HttpProxyServer {
     clientSocket: Socket,
     head: Buffer
   ): Promise<void> {
-    // 解析目标地址
-    const [target, portStr] = (req.url || '').split(':');
-    const port = parseInt(portStr || '443', 10);
+    // 解析目标地址和端口
+    // 支持IPv4、IPv6和域名格式
+    // 例如: example.com:443, 1.2.3.4:443, [2001:db8::1]:443
+    const url = req.url || '';
+    let target: string;
+    let port: number;
+
+    // 检查是否是IPv6地址（包含方括号）
+    if (url.startsWith('[')) {
+      // IPv6格式: [2001:db8::1]:443
+      const closeBracket = url.indexOf(']');
+      if (closeBracket === -1) {
+        console.error(`[HttpProxy] 无效的IPv6地址格式: ${url}`);
+        clientSocket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
+        clientSocket.destroy();
+        return;
+      }
+      target = url.substring(1, closeBracket); // 去掉方括号
+      const portStr = url.substring(closeBracket + 2); // 跳过 ']:' 
+      port = parseInt(portStr, 10) || 443;
+    } else {
+      // IPv4或域名格式: example.com:443 或 1.2.3.4:443
+      const lastColon = url.lastIndexOf(':');
+      if (lastColon === -1) {
+        // 没有端口号，使用默认443
+        target = url;
+        port = 443;
+      } else {
+        target = url.substring(0, lastColon);
+        const portStr = url.substring(lastColon + 1);
+        port = parseInt(portStr, 10);
+        
+        // 验证端口号
+        if (isNaN(port) || port <= 0 || port > 65535) {
+          console.error(`[HttpProxy] 无效的端口号: ${portStr}`);
+          clientSocket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
+          clientSocket.destroy();
+          return;
+        }
+      }
+    }
+
+    // 验证target和port
+    if (!target || isNaN(port)) {
+      console.error(`[HttpProxy] 无法解析目标地址: ${url}`);
+      clientSocket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
+      clientSocket.destroy();
+      return;
+    }
 
     console.log(`[HttpProxy] CONNECT 请求: ${target}:${port}`);
 

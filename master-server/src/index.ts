@@ -8,6 +8,8 @@ import { createApiRouter } from './api/routes';
 import { MasterWebSocketServer } from './websocket/websocket-server';
 import { HttpProxyServer } from './proxy/http-proxy';
 import { Socks5ProxyServer } from './proxy/socks5-proxy';
+import { JWTAuthService } from './security/jwt-auth';
+import { AuditLogger } from './security/audit-logger';
 
 async function startMasterServer() {
   console.log('[MasterServer] 正在启动主服务器...');
@@ -32,12 +34,22 @@ async function startMasterServer() {
   const nodeManager = new NodeManager(config);
   console.log('[MasterServer] 节点管理器已创建');
 
+  // 创建安全服务
+  const auditLogger = new AuditLogger();
+  const jwtService = config.security.apiKey 
+    ? new JWTAuthService(config.security.apiKey)
+    : null;
+  
+  if (jwtService) {
+    console.log('[MasterServer] JWT认证服务已创建');
+  }
+
   // 创建 API 路由
-  app.use('/api', createApiRouter(nodeManager));
+  app.use('/api', createApiRouter(nodeManager, jwtService, auditLogger, config.security.apiKey));
   console.log('[MasterServer] API 路由已注册');
 
   // 创建 WebSocket 服务器
-  const wsServer = new MasterWebSocketServer(httpServer, nodeManager);
+  const wsServer = new MasterWebSocketServer(httpServer, nodeManager, config);
   console.log('[MasterServer] WebSocket 服务器已创建');
 
   // 创建代理服务器（通过 WebSocket 隧道转发）

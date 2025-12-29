@@ -22,6 +22,15 @@ const DEFAULT_CONFIG: MasterServerConfig = {
     fallback: 'round_robin',
   },
   nodeTimeout: 30000, // 30秒
+  security: {
+    requireTLS: false, // 默认不强制TLS（向后兼容）
+    enableMessageSigning: false, // 默认不启用消息签名（向后兼容）
+    maxConnectionsPerNode: 1, // 每个节点默认只允许1个连接
+    rateLimit: {
+      maxMessagesPerMinute: 1000,
+      maxProxyRequestsPerMinute: 500,
+    },
+  },
 };
 
 export function loadConfig(): MasterServerConfig {
@@ -42,6 +51,14 @@ export function loadConfig(): MasterServerConfig {
       nodeSelection: {
         ...DEFAULT_CONFIG.nodeSelection,
         ...(userConfig.nodeSelection || {}),
+      },
+      security: {
+        ...DEFAULT_CONFIG.security,
+        ...(userConfig.security || {}),
+        rateLimit: {
+          ...DEFAULT_CONFIG.security.rateLimit,
+          ...(userConfig.security?.rateLimit || {}),
+        },
       },
     };
   } catch (error) {
@@ -79,6 +96,34 @@ export function getConfig(): MasterServerConfig {
   }
   if (process.env.NODE_SELECTION_FALLBACK) {
     config.nodeSelection.fallback = process.env.NODE_SELECTION_FALLBACK as any;
+  }
+  
+  // 安全配置
+  if (process.env.MASTER_API_KEY) {
+    config.security.apiKey = process.env.MASTER_API_KEY;
+  }
+  if (process.env.MASTER_ALLOWED_NODE_IDS) {
+    config.security.allowedNodeIds = process.env.MASTER_ALLOWED_NODE_IDS.split(',').map(id => id.trim());
+  }
+  if (process.env.MASTER_REQUIRE_TLS) {
+    config.security.requireTLS = process.env.MASTER_REQUIRE_TLS === 'true';
+  }
+  if (process.env.MASTER_ENABLE_MESSAGE_SIGNING) {
+    config.security.enableMessageSigning = process.env.MASTER_ENABLE_MESSAGE_SIGNING === 'true';
+  }
+  if (process.env.MASTER_MAX_CONNECTIONS_PER_NODE) {
+    config.security.maxConnectionsPerNode = parseInt(process.env.MASTER_MAX_CONNECTIONS_PER_NODE, 10);
+  }
+  if (process.env.MASTER_RATE_LIMIT_MESSAGES) {
+    config.security.rateLimit!.maxMessagesPerMinute = parseInt(process.env.MASTER_RATE_LIMIT_MESSAGES, 10);
+  }
+  if (process.env.MASTER_RATE_LIMIT_PROXY_REQUESTS) {
+    config.security.rateLimit!.maxProxyRequestsPerMinute = parseInt(process.env.MASTER_RATE_LIMIT_PROXY_REQUESTS, 10);
+  }
+  
+  // 验证配置
+  if (config.security.enableMessageSigning && !config.security.apiKey) {
+    console.warn('[Config] 警告: 启用了消息签名但未设置API Key，消息签名将无法工作');
   }
   
   return config;
